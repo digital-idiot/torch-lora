@@ -1,8 +1,9 @@
 from minlora import LoRAParametrization
 from torch import nn
+from typing import Literal, Callable, Optional
 
 
-def apply_to_lora(fn):
+def apply_to_lora(fn) -> Callable:
     """apply a function to LoRAParametrization layers, designed to be used with model.apply"""
 
     def apply_fn(layer):
@@ -19,32 +20,78 @@ disable_lora = lambda model: model.apply(apply_to_lora(lambda x: x.disable_lora(
 # ------------------- helper function for collecting parameters for training/saving -------------------
 
 
-def name_is_lora(name):
+def if_lora(name: str) -> bool:
+    parts = name.split(".", -1)
     return (
-        len(name.split(".")) >= 4
-        and (name.split(".")[-4]) == "parametrizations"
-        and name.split(".")[-1] in ["lora_A", "lora_B"]
+        len(parts) >= 4
+        and (parts[-4]) == "parametrizations"
+        and parts[-1] in ["lora_A", "lora_B"]
     )
 
 
-def name_is_bias(name):
-    return name.split(".")[-1] == "bias"
+def if_bias(name: str) -> bool:
+    return name.rsplit(".", 1)[-1] == "bias"
 
 
-def get_params_by_name(model, print_shapes=False, name_filter=None):
-    for n, p in model.named_parameters():
+def if_any(name: str) -> bool:
+    parts = name.split(".", -1)
+    return (
+        len(parts) >= 4
+        and (parts[-4]) == "parametrizations"
+        and parts[-1] in ["lora_A", "lora_B"]
+    ) or (parts[-1] == "bias")
+
+filter_bank = {"lora": if_lora, "bias": if_bias, "both": if_any}
+
+
+def filter_params(
+    model: nn.Module,
+    print_shapes: Optional[bool] = False,
+    named: Optional[bool] = False,
+    name_filter: Optional[Callable] = None
+):
+    for n, p in model.named_parameters(
+        prefix='',
+        recurse=True,
+        remove_duplicate=True
+    ):
         if name_filter is None or name_filter(n):
             if print_shapes:
                 print(n, p.shape)
-            yield p
+            yield (n, p) if named else p
 
+def parameter_groups(model: nn.Module):
+    omit_params = list()
+    lora_params = list()
+    bias_params = list()
+    for n, p in model.named_parameters(
+        prefix='',
+        recurse=True,
+        remove_duplicate=True
+    ):
+        if if_lora(n):
+            lora_params.append(p)
+        elif if_bias(n):
+            bias_params.append(p)
+        else:
+            omit_params.append(p)
+    return {
+        "lora": lora_params,
+        "bias": bias_params,
+        "omit": omit_params
+    }
 
-def get_lora_params(model, print_shapes=False):
-    return get_params_by_name(model, print_shapes=print_shapes, name_filter=name_is_lora)
-
-
-def get_bias_params(model, print_shapes=False):
-    return get_params_by_name(model, print_shapes=print_shapes, name_filter=name_is_bias)
+def get_parameters(
+    model: nn.Module,
+    named Optional[bool] = False,
+    key: Optional[Literal["lora", "bias", "both", None]] = None
+):
+    return filter_params(
+        model=model,
+        print_shapes=False,
+        named=named,
+        name_filter=filter_bank.get(key, None)
+    )
 
 
 def get_lora_state_dict(model):
@@ -55,8 +102,8 @@ def get_lora_state_dict(model):
 
 
 def _prepare_for_multiple_lora(lora_layer):
-    lora_layer.lora_As = []
-    lora_layer.lora_Bs = []
+    lora_layer.lora_As = list()
+    lora_layer.lora_Bs = list()
 
 
 def _append_lora(lora_layer):
