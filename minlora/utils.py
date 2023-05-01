@@ -4,7 +4,7 @@ from typing import Literal, Callable, Optional
 
 
 def apply_to_lora(fn) -> Callable:
-    """apply a function to LoRAParametrization layers, designed to be used with model.apply"""
+    """apply a function to LoRAParametrization layers, designed to be used with `model.apply`"""
 
     def apply_fn(layer):
         if isinstance(layer, LoRAParametrization):
@@ -13,8 +13,12 @@ def apply_to_lora(fn) -> Callable:
     return apply_fn
 
 
-enable_lora = lambda model: model.apply(apply_to_lora(lambda x: x.enable_lora()))
-disable_lora = lambda model: model.apply(apply_to_lora(lambda x: x.disable_lora()))
+def enable_lora(model):
+    model.apply(apply_to_lora(lambda x: x.enable_lora()))
+
+
+def disable_lora(model):
+    model.apply(apply_to_lora(lambda x: x.disable_lora()))
 
 
 # ------------------- helper function for collecting parameters for training/saving -------------------
@@ -41,6 +45,7 @@ def if_any(name: str) -> bool:
         and parts[-1] in ["lora_A", "lora_B"]
     ) or (parts[-1] == "bias")
 
+
 filter_bank = {"lora": if_lora, "bias": if_bias, "both": if_any}
 
 
@@ -59,6 +64,7 @@ def filter_params(
             if print_shapes:
                 print(n, p.shape)
             yield (n, p) if named else p
+
 
 def parameter_groups(model: nn.Module):
     omit_params = list()
@@ -81,9 +87,10 @@ def parameter_groups(model: nn.Module):
         "omit": omit_params
     }
 
+
 def get_parameters(
     model: nn.Module,
-    named Optional[bool] = False,
+    named: Optional[bool] = False,
     key: Optional[Literal["lora", "bias", "both", None]] = None
 ):
     return filter_params(
@@ -95,7 +102,7 @@ def get_parameters(
 
 
 def get_lora_state_dict(model):
-    return {k: v for k, v in model.state_dict().items() if name_is_lora(k)}
+    return {k: v for k, v in model.state_dict().items() if if_lora(k)}
 
 
 # ------------------- helper function for inferencing with multiple lora -------------------
@@ -132,6 +139,7 @@ def select_lora(model, index):
 # ------------------- helper function for tying and untieing weights -------------------
 
 
+# noinspection PyPep8Naming
 def tie_weights(linear: nn.Linear, embedding: nn.Embedding):
     """tie the weights of the linear layer and the embedding layer both with the same lora"""
     # this line below is optional if the original is already tied
@@ -140,8 +148,9 @@ def tie_weights(linear: nn.Linear, embedding: nn.Embedding):
     embedding.parametrizations.weight[0].lora_B = linear.parametrizations.weight[0].lora_A
 
 
+# noinspection PyPep8Naming,PyUnresolvedReferences
 def untie_weights(linear: nn.Linear, embedding: nn.Embedding):
     """untie the weights of the linear layer and the embedding layer"""
-    embedding.parametrizations.weight.original = nn.Parameter(embedding.weight.original.clone())
-    embedding.parametrizations.weight[0].lora_A = nn.Parameter(embedding.parametrizations.weight[0].lora_A.clone())
-    embedding.parametrizations.weight[0].lora_B = nn.Parameter(embedding.parametrizations.weight[0].lora_B.clone())
+    linear.parametrizations.weight.original = nn.Parameter(embedding.weight.original.clone())
+    linear.parametrizations.weight[0].lora_A = nn.Parameter(embedding.parametrizations.weight[0].lora_A.clone())
+    linear.parametrizations.weight[0].lora_B = nn.Parameter(embedding.parametrizations.weight[0].lora_B.clone())
