@@ -15,7 +15,7 @@ from torch import nn
 class LoRAParametrization(nn.Module):
     def __init__(self, fan_in, fan_out, fan_in_fan_out=False, rank=4, lora_dropout_p=0.0, lora_alpha=1):
         super().__init__()
-        # if weight is stored as (fan_out, fan_in), the memory layout of A & B follows (W + BA)x
+        # If weight is stored as (fan_out, fan_in), the memory layout of A & B follows (W + BA)x
         # otherwise, it's x(W + AB). This allows us to tie the weights between linear layers and embeddings
         self.swap = (lambda x: (x[1], x[0])) if fan_in_fan_out else (lambda x: x)
         self.lora_A = nn.Parameter(torch.zeros(self.swap((rank, fan_in))))
@@ -28,13 +28,16 @@ class LoRAParametrization(nn.Module):
         self.register_buffer("lora_dropout_mask", torch.ones(self.swap((1, fan_in)), dtype=self.lora_A.dtype))
         self.forward_fn = self.lora_forward
 
+    # noinspection PyPep8Naming
     def _dropout(self, A):
         # to mimic the original implementation: A @ dropout(x), we do (A * dropout(ones)) @ x
         return A * self.lora_dropout(self.lora_dropout_mask)
 
+    # noinspection PyPep8Naming
     def lora_forward(self, X):
         return X + torch.mm(*self.swap((self.lora_B, self.dropout_fn(self.lora_A)))).view(X.shape) * self.scaling
 
+    # noinspection PyPep8Naming
     def forward(self, X):
         return self.forward_fn(X)
 
@@ -66,27 +69,20 @@ class LoRAParametrization(nn.Module):
         )
 
 
-default_lora_config = {  # specify which layers to add lora to, by default only add to linear layers
-    nn.Linear: {
-        "weight": partial(LoRAParametrization.from_linear, rank=4),
-    },
-}
-
-
-def apply_lora(layer, register=True, merge=False, lora_config=default_lora_config):
-    """add lora parametrization to a layer, designed to be used with model.apply"""
+def apply_lora(layer, lora_config, register=True, merge=False):
+    """add lora parametrization to a layer, designed to be used with `model.apply`"""
     if register:
         if type(layer) in lora_config:
             for attr_name, parametrization in lora_config[type(layer)].items():
                 parametrize.register_parametrization(layer, attr_name, parametrization(layer))
-    else:  # this will remove all parametrizations, use with caution
+    else:  # this will remove all parametrizations, use caustiously.
         if hasattr(layer, "parametrizations"):
             for attr_name in layer.parametrizations.keys():
                 parametrize.remove_parametrizations(layer, attr_name, leave_parametrized=merge)
 
 
-def add_lora(model, lora_config=default_lora_config):
-    """add lora parametrization to all layers in a model. Calling it twice will add lora twice"""
+def add_lora(model, lora_config):
+    """Add lora parametrization to all layers in a model. Calling it twice will add lora twice"""
     model.apply(partial(apply_lora, lora_config=lora_config))
 
 
